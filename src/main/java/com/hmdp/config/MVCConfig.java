@@ -10,11 +10,12 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class MVCConfig implements WebMvcConfigurer {
 
-
+    @Resource
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        registry.addInterceptor(new LoginInterceptor())
+        registry.addInterceptor(new LoginInterceptor(stringRedisTemplate))
                 .excludePathPatterns(
                         "/shop/**",
                         "/voucher/**",
