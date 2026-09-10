@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.ShopType;
@@ -7,7 +8,6 @@ import com.hmdp.mapper.ShopTypeMapper;
 import com.hmdp.service.IShopTypeService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisConstants;
-import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -40,24 +40,28 @@ public class ShopTypeServiceImpl extends ServiceImpl<ShopTypeMapper, ShopType> i
         String key = RedisConstants.CACHE_SHOP_KEY + "type";
         String cacheJson = redisTemplate.opsForValue().get(key);
 
-        //2 有直接返回缓存数据
-        if (cacheJson != null && !cacheJson.isEmpty()) {
-            // 将缓存中的字符串转换为List<ShopType>
+        // 2. 缓存命中，判断是否为空值
+        if (cacheJson != null) {
+            // 缓存为空字符串，说明数据库中也没有数据
+            if (cacheJson.isEmpty()) {
+                return Result.ok(Collections.emptyList());
+            }
+            // 缓存有数据，直接返回
             List<ShopType> typeList = JSONUtil.toList(cacheJson, ShopType.class);
             return Result.ok(typeList);
         }
-        //3 无从数据库中查询数据
+        // 3. 缓存未命中，从数据库中查询数据
         List<ShopType> typeList = this.query().orderByAsc("sort").list();
 
-        //4 若数据库中也没有数据，返回空列表
-        // TODO 后期优化缓存穿透问题
+        // 4. 若数据库中也没有数据，缓存空列表
         if (typeList.isEmpty()) {
+            redisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
             return Result.ok(Collections.emptyList());
         }
-        //5 若数据库中也有数据，写入缓存
+        // 5. 若数据库中也有数据，写入缓存
         redisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(typeList), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
 
-        //6 返回缓存数据
+        // 6. 返回缓存数据
         return Result.ok(typeList);
     }
 }

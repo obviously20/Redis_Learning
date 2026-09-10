@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
@@ -42,15 +43,21 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         //1 从redis中查询缓存
         String cacheShop = stringRedisTemplate.opsForValue().get(key);
         //2 判断缓存是否存在，存在直接返回缓存数据
-        if (cacheShop != null) {
+        if (StrUtil.isNotBlank(cacheShop)) {
             Shop shop = JSONUtil.toBean(cacheShop, Shop.class);
             return Result.ok(shop);
+        }
+        // 判断缓存命中的是否为空，为空直接返回空(前面已经判断了，这里不为null就是空)
+        if (cacheShop != null) {
+            return Result.fail("商铺不存在");
         }
         //3 从数据库中查询商铺信息
         Shop shop = getById(id);
 
         //4 查询失败，返回提示
         if (shop == null) {
+            // 避免缓存穿透，缓存空，过期时间为2分钟
+            stringRedisTemplate.opsForValue().set(key, "", RedisConstants.CACHE_NULL_TTL, TimeUnit.MINUTES);
             return Result.fail("商铺不存在");
         }
 
