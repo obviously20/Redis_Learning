@@ -6,9 +6,13 @@ import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.RedisConstants;
 import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
 
@@ -51,9 +55,31 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         }
 
         //5 查询成功，写入缓存
-        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop));
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), RedisConstants.CACHE_SHOP_TTL, TimeUnit.MINUTES);
 
         //6 返回查询结果
         return Result.ok(shop);
+    }
+
+    /**
+     * 更新商铺信息
+     * @param shop
+     * @return
+     */
+    @Override
+    @Transactional
+    public Result update(Shop shop) {
+        // 先检查商铺的id是否存在
+        Long id = shop.getId();
+        if (id == null) {
+            return Result.fail("商铺id不能为空");
+        }
+        // 修改数据库
+        updateById(shop);
+
+        // 删除缓存
+        stringRedisTemplate.delete(CACHE_SHOP_KEY + id);
+
+        return Result.ok();
     }
 }
