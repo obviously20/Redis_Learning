@@ -27,4 +27,11 @@ public interface IShopService extends IService<Shop> {
      * @return
      */
     Result update(Shop shop);
+
+    /**
+     * 将商铺信息保存到Redis（带逻辑过期时间）
+     * @param id 商铺id
+     * @param expireSeconds 过期时间（秒）
+     */
+    void saveShop2Redis(Long id, Long expireSeconds);
 }
