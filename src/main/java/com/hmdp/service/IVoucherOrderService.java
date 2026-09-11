@@ -20,4 +20,11 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
      * @return
      */
     Result seckillVoucher(Long voucherId);
+
+    /**
+     * 创建订单（代理对象需要调用所以暴露的接口）
+     * @param voucherId
+     * @return
+     */
+    Result createVoucherOrder(Long voucherId);
 }
