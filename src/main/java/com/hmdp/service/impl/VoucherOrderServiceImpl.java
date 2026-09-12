@@ -8,9 +8,11 @@ import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import org.springframework.aop.framework.AopContext;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,6 +33,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     private ISeckillVoucherService seckillVoucherService;
     @Autowired
     private RedisIdWorker redisIdWorker;
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @Override
     public Result seckillVoucher(Long voucherId) {
@@ -55,14 +59,30 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
 
         Long userId = UserHolder.getUser().getId();
-        synchronized (userId.toString().intern()) {//二：这里将悲观锁的范围覆盖到整个createVoucherOrder方法中,先完成事务（确保操作完成数据库）后再释放锁，保证了不会出现并发安全问题；如果悲观锁写在createVoucherOrder方法中，在执行完方法后悲观锁释放，其他线程进入，此时事务还未提交数据库这样就会出现线程安全问题
-            //一：这里的悲观锁synchronized是解决并发安全问题的，这里是为了防止用户重复购买,用userId作为锁对象，表示每个用户只能购买一次
-            // intern() 这个方法是从常量池中拿到数据（在池中比对，值相等的就返回相等的那个值的对象存储地址），如果我们直接使用userId.toString() 他拿到的对象实际上是不同的对象，new出来的对象，我们使用锁必须保证锁必须是同一把锁
-            //三：调用的方法，其实是this.的方式调用的，事务想要生效，还得利用代理来生效，所以这个地方，我们需要获得原始的事务对象， 来操作事务（@Transactional是基于代理的，所以这里需要获得原始的事务对象）
-            //return this.createVoucherOrder(voucherId);
-            // 获取原始的事务对象，来操作事务（启动类中加@EnableAspectJAutoProxy(exposeProxy = true)// 暴露代理对象，才能拿到代理对象，还要一个依赖）
+//        synchronized (userId.toString().intern()) {//二：这里将悲观锁的范围覆盖到整个createVoucherOrder方法中,先完成事务（确保操作完成数据库）后再释放锁，保证了不会出现并发安全问题；如果悲观锁写在createVoucherOrder方法中，在执行完方法后悲观锁释放，其他线程进入，此时事务还未提交数据库这样就会出现线程安全问题
+//            //一：这里的悲观锁synchronized是解决并发安全问题的，这里是为了防止用户重复购买,用userId作为锁对象，表示每个用户只能购买一次
+//            // intern() 这个方法是从常量池中拿到数据（在池中比对，值相等的就返回相等的那个值的对象存储地址），如果我们直接使用userId.toString() 他拿到的对象实际上是不同的对象，new出来的对象，我们使用锁必须保证锁必须是同一把锁
+//            //三：调用的方法，其实是this.的方式调用的，事务想要生效，还得利用代理来生效，所以这个地方，我们需要获得原始的事务对象， 来操作事务（@Transactional是基于代理的，所以这里需要获得原始的事务对象）
+//            //return this.createVoucherOrder(voucherId);
+//            // 获取原始的事务对象，来操作事务（启动类中加@EnableAspectJAutoProxy(exposeProxy = true)// 暴露代理对象，才能拿到代理对象，还要一个依赖）
+//            IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
+//            return proxy.createVoucherOrder(voucherId);
+//        }
+
+        // 获取自定义的锁（创建锁对象）
+        SimpleRedisLock lock = new SimpleRedisLock("order"+userId, stringRedisTemplate);
+        // 判断是否成功获取锁
+        if(!lock.tryLock(5)){
+            // 获取锁失败，说明有其他线程正在购买/已购买过，不能重复购买
+            return Result.fail("不能重复购买！");
+        }
+        try {
+            // 调用创建订单方法
             IVoucherOrderService proxy = (IVoucherOrderService) AopContext.currentProxy();
             return proxy.createVoucherOrder(voucherId);
+        } finally {
+            // 手动释放锁
+            lock.unlock();
         }
 
 
