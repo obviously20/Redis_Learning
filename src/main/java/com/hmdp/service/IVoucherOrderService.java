@@ -21,10 +21,16 @@ public interface IVoucherOrderService extends IService<VoucherOrder> {
      */
     Result seckillVoucher(Long voucherId);
 
+//    /**
+//     * 创建订单（代理对象需要调用所以暴露的接口）：同步秒杀方案
+//     * @param voucherId
+//     * @return
+//     */
+//    Result createVoucherOrder(Long voucherId);
+
     /**
-     * 创建订单（代理对象需要调用所以暴露的接口）
-     * @param voucherId
-     * @return
+     * 创建订单（代理对象需要调用所以暴露的接口）：异步秒杀方案
+     * @param voucherOrder
      */
-    Result createVoucherOrder(Long voucherId);
+    void createVoucherOrder(VoucherOrder voucherOrder);
 }
