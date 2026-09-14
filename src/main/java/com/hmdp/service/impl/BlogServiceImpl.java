@@ -136,20 +136,21 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
      */
     @Override
     public Result queryBlogLike(Long id) {
-        String key = BLOG_LIKED_KEY+id;
+        String key = BLOG_LIKED_KEY + id;
         // 查询redis内的点赞排行榜top5: zrange key 0 4
         Set<String> top5 = stringRedisTemplate.opsForZSet().range(key, 0, 4);
-        // 将top5中的id和score分离
+        if (top5 == null || top5.isEmpty()) {
+            return Result.ok(Collections.emptyList());
+        }
+        // 将top5中的id分离
         List<Long> ids = top5.stream().map(Long::valueOf).collect(Collectors.toList());
-        // 查询用户
         String idStr = StrUtil.join(",", ids);
-        // 3.根据用户id查询用户 WHERE id IN ( 5 , 1 ) ORDER BY FIELD(id, 5, 1) --因为用in查询返回的用户id是随机的，所以需要根据idStr排序一下才符合时间先后顺序
+        // 根据用户id查询用户 WHERE id IN ( 5 , 1 ) ORDER BY FIELD(id, 5, 1) --用FIELD函数保证返回顺序和点赞顺序一致
         List<UserDTO> userDTOS = userService.query()
                 .in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list()
                 .stream()
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
                 .collect(Collectors.toList());
-        // 4.返回
         return Result.ok(userDTOS);
     }
 
