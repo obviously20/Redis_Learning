@@ -53,8 +53,10 @@ public class Blog implements Serializable {
     /**
      * 是否点赞过了
      */
+    // @TableField(exist = false): 标示不是数据库字段，只是在实体类中使用
     @TableField(exist = false)
     private Boolean isLike;
+
 
     /**
      * 标题
