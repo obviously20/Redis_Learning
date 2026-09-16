@@ -6,6 +6,7 @@ import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
+import com.hmdp.dto.ScrollResult;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
 import com.hmdp.entity.Follow;
@@ -20,8 +21,10 @@ import com.hmdp.utils.UserHolder;
 import jakarta.annotation.Resource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -190,6 +193,76 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         });
         // 返回id
         return Result.ok(blog.getId());
+    }
+
+    /**
+     * 查询关注的探店博主的博文，滚动分页查询
+     * @param maxTime
+     * @param offset
+     * @return
+     */
+    @Override
+    public Result queryFollowBlog(Long maxTime, Integer offset) {
+        // 1.获取登录用户ID
+        Long userId = UserHolder.getUser().getId();
+        
+        // 2.从redis中查询当前用户的收件箱（滚动分页查询）ZREVRANGEBYSCORE key Max Min LIMIT offset count
+        String key = FEED_KEY + userId;
+        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(key, 0, maxTime, offset, 2);//滚动分页查询（根据时间戳从大到小排序，所以最新博文在最前面），offset为偏移量，2为每页数量
+
+        // 3.判空（收件箱没有的话）
+        if(typedTuples == null || typedTuples.isEmpty()){
+            return Result.ok();
+        }
+        // 4.有则将查询到的信息提取出来：博文id列表，时间戳，偏移量（重点实现）
+
+        // 博文id列表
+        List<Long> blogIds = new ArrayList<>(typedTuples.size());
+        // 最小时间戳（要返回给前端的minTime）
+        Long minTime = 0L;
+        // 下次查询要跳过的offset
+        Integer count = 1;
+        for (ZSetOperations.TypedTuple<String> typedTuple : typedTuples) {
+            // 获取blogid,并封装进blogIds中
+            blogIds.add(Long.valueOf(typedTuple.getValue()));
+            // 获取时间戳(查询到当前元素的时间戳)
+            long time = typedTuple.getScore().longValue();
+            if(time == minTime){// 说明当前元素的时间戳和上一个元素的时间戳相同，所以要跳过值加1
+                count++;
+            }else {// 说明当前元素的时间戳和上一个元素的时间戳不同，且已知上面的滚动分页查询是从大到小排序，所以后面查到的时间戳会更小
+                // 不相等，就说明有跟小的时间戳，所以要重置count为1，minTime为当前元素的时间戳
+                minTime = time;
+                count = 1;
+            }
+        }
+        // 情况若为 90 90 90 90 90 85;
+        // 那第1页 90 90 、前端传的offset为0，maxTime=MAX,minTime=90,不相等所以offset为count(2) 所以要跳过2个元素(正常)；
+        // 第2页 90 90 、前端传的offset为2，maxTime=90,后端计算的minTime=90,maxTime==minTime，但接下来要返回给前端的offset却为count(2)，跳过2个元素，(异常，实际要跳过4个元素:count(2)+offset(2)=4)
+        // 那第3页就会陷入死循环查看一直是90 90
+        // 所以这是为了处理第2页导致的死循环的情况，所以要判断minTime是否等于maxTime
+        count = minTime == maxTime ?  count + offset : count;
+
+        // 5.根据博文id列表查询博文
+        String idStr = StrUtil.join(",", blogIds);
+        List<Blog> blogs = query().in("id", blogIds).last("ORDER BY FIELD(id," + idStr + ")").list();
+
+        // 查询博文还需要查询用户信息和是否点赞过了
+        for (Blog blog : blogs) {
+            // 查询用户
+            queryBlogUser(blog);
+            // 查询是否点赞
+            queryIsLike(blog);
+        }
+
+
+        // 封装vo返回值给前端
+        ScrollResult scrollResult = new ScrollResult();
+        scrollResult.setList(blogs);
+        scrollResult.setMinTime(minTime);
+        scrollResult.setOffset(count);
+
+        return Result.ok(scrollResult);
     }
 
     private void queryBlogUser(Blog blog) {
