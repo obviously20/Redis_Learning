@@ -4,6 +4,7 @@ import cn.hutool.core.util.BooleanUtil;
 import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import cn.hutool.json.JSONUtil;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
@@ -12,18 +13,24 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.utils.CacheClient;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RedisData;
+import com.hmdp.utils.SystemConstants;
 import jakarta.annotation.Resource;
+import org.springframework.data.geo.Distance;
+import org.springframework.data.geo.GeoResult;
+import org.springframework.data.geo.GeoResults;
+import org.springframework.data.redis.connection.RedisGeoCommands;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.domain.geo.GeoReference;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
-import static com.hmdp.utils.RedisConstants.LOCK_SHOP_KEY;
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -276,6 +283,80 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         redisData.setData(shop);
         // 3、写入redis(只有逻辑过期时间)
         stringRedisTemplate.opsForValue().set(CACHE_SHOP_KEY + id, JSONUtil.toJsonStr(redisData));
+    }
+
+    /**
+     * 根据商铺类型分页查询商铺信息
+     * @param typeId
+     * @param current
+     * @param x
+     * @param y
+     * @return
+     */
+    // 重点是逻辑分页查询（截取from ~ end之间的数据）的操作
+    @Override
+    public Result queryShopByType(Integer typeId, Integer current, Double x, Double y) {
+        // 先判断x,y这两个是否为空
+        if (x == null || y == null) {
+            // 那就去数据库中查询所有商铺信息
+            Page<Shop> page = query()
+                    .eq("type_id", typeId)
+                    .page(new Page<>(current, SystemConstants.DEFAULT_PAGE_SIZE));
+            // 返回数据
+            return Result.ok(page.getRecords());
+        }
+        // xy不为空，开始算分页的开始和结束索引(包前不包后)
+        int from = (current - 1) * SystemConstants.DEFAULT_PAGE_SIZE;
+        int end = current * SystemConstants.DEFAULT_PAGE_SIZE;
+        // 一：
+        // 开始去redis中的GEO查询商铺信息 （GEOSEARCH key BYLONLAT x y BYRADIUS 10 WITHDISTANCE）
+        String key = SHOP_GEO_KEY + typeId;
+        GeoResults<RedisGeoCommands.GeoLocation<String>> results = stringRedisTemplate.opsForGeo().search(
+                key,//key
+                GeoReference.fromCoordinate(x, y),//查询的中心点(圆心)
+                new Distance(5000),//查询的半径(单位：米)
+                RedisGeoCommands.GeoSearchCommandArgs.newGeoSearchArgs().includeDistance().limit(end)
+                // 查询的范围(包含距离)，并限制返回的条数（它这里的limit是查询的总条数0-end，所以后面我们还需要去做逻辑分页）
+        );
+
+        // 将返回的信息分开（店铺id 和 距离）
+        // 判空
+        if (results == null) {
+            return Result.ok(Collections.emptyList());
+        }
+        // 二
+        // results.getContent()，将返回的GeoResults这个对象转换为GeoResult列表，为什么？
+        // 将对象转换成列表就可以知道得到的结果的总条数，从而判断是否有数据了,还有就可以根据索引截取from ~ end的部分
+        List<GeoResult<RedisGeoCommands.GeoLocation<String>>> list = results.getContent();
+        if( list.size() <= from){
+            // 如果返回的GeoResult列表中数据不足from条，说明没有数据了
+            return Result.ok(Collections.emptyList());
+        }
+        // 三：
+        List<Long> ids = new ArrayList<>(list.size());
+        Map<String, Distance> distanceMap = new HashMap<>(list.size());
+        //截取 from ~ end的部分
+        list.stream().skip(from).forEach(result -> {
+            // 从GeoResult中获取店铺id
+            String shopIdStr = result.getContent().getName();
+            ids.add(Long.valueOf(shopIdStr));
+            // 从GeoResult中获取距离
+            Distance distance = result.getDistance();
+            distanceMap.put(shopIdStr, distance);
+        });
+
+
+        // 解析出店铺id为字符串
+        String idStr = StrUtil.join(",", ids);
+        // 根据店铺id查询数据库中的商铺信息
+        List<Shop> shops = query().in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
+        // 查询完店铺的所有信息后，将对应店铺信息的距离也添加到店铺信息中
+        for (Shop shop : shops) {
+            shop.setDistance(distanceMap.get(shop.getId().toString()).getValue());
+        }
+
+        // 最后返回结果
+        return Result.ok(shops);
     }
 
 }

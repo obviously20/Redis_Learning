@@ -34,4 +34,14 @@ public interface IShopService extends IService<Shop> {
      * @param expireSeconds 过期时间（秒）
      */
     void saveShop2Redis(Long id, Long expireSeconds);
+
+    /**
+     * 根据商铺类型分页查询商铺信息
+     * @param typeId
+     * @param current
+     * @param x
+     * @param y
+     * @return
+     */
+    Result queryShopByType(Integer typeId, Integer current, Double x, Double y);
 }
