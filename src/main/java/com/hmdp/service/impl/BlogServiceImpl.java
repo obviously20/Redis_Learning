@@ -8,10 +8,12 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.dto.Result;
 import com.hmdp.dto.UserDTO;
 import com.hmdp.entity.Blog;
+import com.hmdp.entity.Follow;
 import com.hmdp.entity.User;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
@@ -26,6 +28,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
+import static com.hmdp.utils.RedisConstants.FEED_KEY;
 
 /**
  * <p>
@@ -43,6 +46,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
+
+    @Autowired
+    private IFollowService followService;
 
     @Override
     public Result queryHotBlog(Integer current) {
@@ -152,6 +158,38 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 .map(user -> BeanUtil.copyProperties(user, UserDTO.class))
                 .collect(Collectors.toList());
         return Result.ok(userDTOS);
+    }
+
+    /**
+     * 保存探店博文
+     * @param blog
+     * @return
+     */
+    @Override
+    public Result saveBlog(Blog blog) {
+        // 获取登录用户（现在发博文的用户）
+        UserDTO user = UserHolder.getUser();
+        blog.setUserId(user.getId());
+        // 保存探店博文
+        boolean isSuccess = save(blog);
+        if(!isSuccess){
+            return Result.fail("新增笔记失败!");
+        }
+        // 将保存的博文id封装进redis中（将其下发至关注当前用户的粉丝的信箱redis模拟）
+        // 先查tb_follow表，获取关注当前用户的粉丝id
+        List<Follow> follows = followService.query().eq("follow_user_id", user.getId()).list();
+        // 将查出的粉丝，根据id在redis中封装成一个收件箱
+        follows.forEach(follow -> {
+            // 获取粉丝id
+            Long fanId = follow.getUserId();
+            // 封装并发送保存至redis中(推模式)
+            String key = FEED_KEY + fanId;
+            // 普通分页查询依赖角标，会出现重复读取的情况
+            // 其中为滚动分页查询，所以时间戳为score;在滚动分页查询时，会根据score从大到小排序，所以最新博文在最前面，且还会记录每页最后一个博文的时间戳，下一页查询时，会根据这个时间戳（比这个时间戳小的博文）来查询下一页的博文
+            stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), System.currentTimeMillis());
+        });
+        // 返回id
+        return Result.ok(blog.getId());
     }
 
     private void queryBlogUser(Blog blog) {
