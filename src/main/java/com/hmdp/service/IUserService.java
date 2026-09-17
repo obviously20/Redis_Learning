@@ -37,4 +37,10 @@ public interface IUserService extends IService<User> {
      * @return
      */
     Result sign();
+
+    /**
+     * 获取当前用户截至今天为止的连续签到的次数
+     * @return
+     */
+    Result signCount();
 }

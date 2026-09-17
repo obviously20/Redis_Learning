@@ -104,4 +104,10 @@ public class UserController {
         // 实现签到功能
         return userService.sign();
     }
+
+    @GetMapping("/sign/count")
+    public Result signCount() {
+        // 获取当前用户截至今天为止的连续签到的次数
+        return userService.signCount();
+    }
 }
