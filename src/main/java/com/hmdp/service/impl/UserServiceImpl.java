@@ -13,6 +13,7 @@ import com.hmdp.mapper.UserMapper;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RegexPatterns;
 import com.hmdp.utils.RegexUtils;
+import com.hmdp.utils.UserHolder;
 import jakarta.servlet.http.HttpSession;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -119,6 +122,29 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         // 7.返回token
         return Result.ok(token);
+    }
+
+    /**
+     * 签到功能
+     * @return
+     */
+    @Override
+    public Result sign() {
+        // 获取当前登录用户
+        Long userId = UserHolder.getUser().getId();
+        // 获取当前系统时间年+月
+        LocalDateTime now = LocalDateTime.now();
+        String keySuffix = now.format(DateTimeFormatter.ofPattern(":yyyyMM"));
+        // 拼接key
+        String key = USER_SIGN_KEY + userId + keySuffix;
+
+        // 使用Redis的中的setbit映射用户是否签到过，签到为1（true），未签到为0
+        // 获取当天是这个月的第几天
+        int dayOfMonth = now.getDayOfMonth();
+        // SETBIT key offset 1
+        stringRedisTemplate.opsForValue().setBit(key, dayOfMonth - 1, true);
+
+        return Result.ok();
     }
 
     /**
